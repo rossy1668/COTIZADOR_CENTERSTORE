@@ -238,7 +238,12 @@ const PERIODS = [
 ];
 
 const QTY_DISC = [{min:1,max:1,pct:0},{min:2,max:2,pct:5},{min:3,max:3,pct:10},{min:4,max:4,pct:15},{min:5,max:99,pct:20}];
-function qtyPct(q){ return (QTY_DISC.find(r=>q>=r.min&&q<=r.max)||{pct:0}).pct; }
+// Descuento por cantidad SOLO en mensual, basado en cantidad de servicios distintos seleccionados
+function qtyPct(){ 
+  if(period !== 'x1m') return 0;
+  const numSvcs = selected.size;
+  return (QTY_DISC.find(r=>numSvcs>=r.min&&numSvcs<=r.max)||{pct:0}).pct; 
+}
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let stock = JSON.parse(localStorage.getItem('cs_stock2')||'null') || Object.fromEntries(SERVICES.map(s=>[s.id,true]));
@@ -276,15 +281,15 @@ function calcItem(svc) {
   const base = basePrice(svc);
   const ms = PERIODS.find(p=>p.id===period).months;
   const subAfterTime = periodTotal * qty;
-  const qPct = qtyPct(qty);
+  const qPct = qtyPct();
   const qDisc = Math.round(subAfterTime * qPct / 100);
   return {
     qty, base, ms, periodTotal, timeDisc,
     timeDiscTotal: timeDisc * qty,
     qPct, qDisc,
-    finalTotal: subAfterTime - qDisc,
+    finalTotal: Math.round(subAfterTime - qDisc),
     sinDesc: base * ms * qty,
-    perMonth: +(periodTotal / ms).toFixed(2),
+    perMonth: Math.round(periodTotal / ms),
   };
 }
 
@@ -348,7 +353,7 @@ function renderServices() {
       const base = basePrice(svc);
       const {periodTotal, timeDisc} = periodPrice(svc);
       const hasDisc = timeDisc > 0;
-      const equiv = per.months > 1 ? `≈ S/${(periodTotal/per.months).toFixed(1)}/mes` : '';
+      const equiv = per.months > 1 ? `≈ S/${Math.round(periodTotal/per.months)}/mes` : '';
       let priceBlock = '';
       if(per.months===1) {
         priceBlock = `<div class="svc-price-block"><span class="svc-price-mono svc-final">S/${base}</span><span style="font-size:10px;color:var(--muted)">/mes</span></div>`;
