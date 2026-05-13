@@ -237,12 +237,15 @@ const PERIODS = [
   { id:'x1a', label:'X1A', sub:'Anual',      months:12 },
 ];
 
-const QTY_DISC = [{min:1,max:1,pct:0},{min:2,max:2,pct:5},{min:3,max:3,pct:10},{min:4,max:4,pct:15},{min:5,max:99,pct:20}];
-// Descuento por cantidad SOLO en mensual, basado en cantidad de servicios distintos seleccionados
-function qtyPct(){ 
+// Descuento por perfiles (mismo servicio) — siempre activo
+const PROFILE_DISC = [{min:1,max:1,pct:0},{min:2,max:2,pct:5},{min:3,max:3,pct:10},{min:4,max:4,pct:15},{min:5,max:99,pct:20}];
+function profilePct(qty){ return (PROFILE_DISC.find(r=>qty>=r.min&&qty<=r.max)||{pct:0}).pct; }
+
+// Descuento por combo (servicios distintos) — SOLO en mensual, nunca se acumula con perfiles
+const COMBO_DISC = [{min:1,max:1,pct:0},{min:2,max:2,pct:5},{min:3,max:3,pct:10},{min:4,max:4,pct:15},{min:5,max:99,pct:20}];
+function comboPct(){
   if(period !== 'x1m') return 0;
-  const numSvcs = selected.size;
-  return (QTY_DISC.find(r=>numSvcs>=r.min&&numSvcs<=r.max)||{pct:0}).pct; 
+  return (COMBO_DISC.find(r=>selected.size>=r.min&&selected.size<=r.max)||{pct:0}).pct;
 }
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
@@ -281,13 +284,26 @@ function calcItem(svc) {
   const base = basePrice(svc);
   const ms = PERIODS.find(p=>p.id===period).months;
   const subAfterTime = periodTotal * qty;
-  const qPct = qtyPct();
-  const qDisc = Math.round(subAfterTime * qPct / 100);
+
+  // Descuento por perfiles (este servicio, qty unidades)
+  const profPct = profilePct(qty);
+  const profDisc = Math.round(subAfterTime * profPct / 100);
+
+  // Descuento por combo (solo mensual, solo si hay >1 servicio distinto)
+  const cmbPct = selected.size > 1 ? comboPct() : 0;
+  const cmbDisc = Math.round(subAfterTime * cmbPct / 100);
+
+  // Solo aplica el mayor, nunca ambos
+  const useProfile = profDisc >= cmbDisc;
+  const activeDisc = useProfile ? profDisc : cmbDisc;
+  const activePct  = useProfile ? profPct  : cmbPct;
+  const discType   = activeDisc > 0 ? (useProfile ? 'profile' : 'combo') : 'none';
+
   return {
     qty, base, ms, periodTotal, timeDisc,
     timeDiscTotal: timeDisc * qty,
-    qPct, qDisc,
-    finalTotal: Math.round(subAfterTime - qDisc),
+    activePct, activeDisc, discType,
+    finalTotal: Math.round(subAfterTime - activeDisc),
     sinDesc: base * ms * qty,
     perMonth: Math.round(periodTotal / ms),
   };
@@ -414,16 +430,17 @@ function renderQuote() {
     const c = calcItem(svc);
     totalBase      += c.sinDesc;
     totalTimeDisc  += c.timeDiscTotal;
-    totalQtyDisc   += c.qDisc;
+    totalQtyDisc   += c.activeDisc;
 
-    const anyDisc = c.timeDiscTotal>0 || c.qDisc>0;
+    const anyDisc = c.timeDiscTotal>0 || c.activeDisc>0;
     const priceStr = per.months>1
       ? `S/${c.finalTotal}<span style="font-size:10px;color:var(--muted)">/${per.label}</span>`
       : `S/${c.finalTotal}<span style="font-size:10px;color:var(--muted)">/mes</span>`;
 
     const tags = [
       c.timeDiscTotal>0 ? `<span class="disc-tag time">⏱ -S/${c.timeDiscTotal} ${per.sub.toLowerCase()}</span>` : '',
-      c.qPct>0          ? `<span class="disc-tag qty">📦 -${c.qPct}% ×${c.qty}</span>` : '',
+      c.discType==='profile' && c.activeDisc>0 ? `<span class="disc-tag qty">👤 -${c.activePct}% x${c.qty} perfiles</span>` : '',
+      c.discType==='combo'   && c.activeDisc>0 ? `<span class="disc-tag qty">🎁 -${c.activePct}% combo</span>` : '',
     ].filter(Boolean).join('');
 
     return `<div class="quote-item">
@@ -460,7 +477,7 @@ function renderQuote() {
     chip.style.display='block';
     const parts=[];
     if(totalTimeDisc>0) parts.push(`S/${totalTimeDisc} por ${per.sub.toLowerCase()}`);
-    if(totalQtyDisc>0)  parts.push(`S/${totalQtyDisc} por cantidad`);
+    if(totalQtyDisc>0)  parts.push(`S/${totalQtyDisc} por descuento`);
     chip.textContent = `🎉 Ahorro total: S/${saved}  (${parts.join(' + ')})`;
   } else chip.style.display='none';
 
@@ -480,13 +497,14 @@ function copyCotizacion() {
   let total=0, saved=0;
   items.forEach(svc=>{
     const c = calcItem(svc);
-    total += c.finalTotal; saved += c.timeDiscTotal + c.qDisc;
+    total += c.finalTotal; saved += c.timeDiscTotal + c.activeDisc;
     text += `⭐ ${svc.name}`;
-    if(c.qty>1) text += ` ×${c.qty}`;
+    if(c.qty>1) text += ` ×${c.qty} perfiles`;
     text += `: S/${c.finalTotal}`;
     const parts=[];
     if(c.timeDiscTotal>0) parts.push(`${per.sub.toLowerCase()} -S/${c.timeDiscTotal}`);
-    if(c.qDisc>0)         parts.push(`cantidad -${c.qPct}%`);
+    if(c.discType==='profile' && c.activeDisc>0) parts.push(`perfiles -${c.activePct}%`);
+    if(c.discType==='combo'   && c.activeDisc>0) parts.push(`combo -${c.activePct}%`);
     if(parts.length) text += ` _(${parts.join(', ')})_`;
     text += `\n`;
   });
